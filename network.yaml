@@ -1,0 +1,207 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "This is cloudformation NETWORK Stack"
+
+Mappings:
+  SubnetConfig:
+    VPC:
+      CIDR: 10.50.0.0/16
+    WebSubnet1:
+      CIDR: 10.50.1.0/24
+    AppSubnet1:
+      CIDR: 10.50.2.0/24
+
+Resources:
+  CFVPC:                      #Create VPC
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: !FindInMap [SubnetConfig, VPC, CIDR]
+      Tags:
+        - Key: Name
+          Value: CFMyVPC
+  WebSubnet1:                 #Create WebSubnet
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !FindInMap [ SubnetConfig, WebSubnet1, CIDR ]
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref CFVPC
+      Tags:
+        -
+          Key: Name
+          Value: WebSubnet
+  AppSubnet1:                 #Create AppSubnet
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !FindInMap [ SubnetConfig, AppSubnet1, CIDR ]
+      VpcId: !Ref CFVPC
+      Tags:
+        -
+          Key: Name
+          Value: AppSubnet
+  CFVPCIGW:                   #Create IGW
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: CFVPCInternetGateway
+  CFVPCAttachIGW:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: CFVPC
+      InternetGatewayId:
+        Ref: CFVPCIGW
+  WebSubnetRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: CFVPC
+      Tags:
+        - Key: Name
+          Value: WebSubnetRouteTable
+          Key: Description
+          Value: Web servers subnet with internet connectivity.
+  WebSubnetInternetRoute:
+    Type: AWS::EC2::Route
+    DependsOn: CFVPCIGW
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: CFVPCIGW
+      RouteTableId:
+        Ref: WebSubnetRouteTable
+  WebSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref WebSubnetRouteTable
+      SubnetId: !Ref WebSubnet1
+  WebServerSecurityGroup:     #Webserver security group
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow Port 80 to browse web pages.
+      VpcId: !Ref CFVPC
+      SecurityGroupIngress:
+        - 
+          IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        -
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: Web server access on port 80
+  SSHServerSecurityGroup:     #Security group
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow Port 80 to browse web pages.
+      VpcId: !Ref CFVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 92.238.90.245/32
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.50.0.0/16
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: SSH access to Web Servers
+  SSHAppServerSecurityGroup:     #Security group
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow Port 80 to browse web pages.
+      VpcId: !Ref CFVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.50.0.0/16
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: SSH access to APP servers withing vpc
+  NATGW:
+    Type: "AWS::EC2::NatGateway"
+    Properties:
+      AllocationId: !GetAtt NATEIP.AllocationId
+      SubnetId: !Ref WebSubnet1
+      Tags:
+        -
+          Key: Name
+          Value: NAT Gateway
+  NATEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  AppSubnetRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: CFVPC
+      Tags:
+        - Key: Name
+          Value: AppSubnetRouteTable
+          Key: Description
+          Value: App servers subnet with NatGateway connectivity.
+  AppGatewayNatInternetRoute:
+    Type: AWS::EC2::Route
+    DependsOn: NATGW
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGW
+      RouteTableId: !Ref AppSubnetRouteTable
+  AppSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref AppSubnetRouteTable
+      SubnetId: !Ref AppSubnet1
+        
+
+Outputs:
+  CFVPCID:
+    Description: "VPC ID of CFVPC"
+    Value: !Ref CFVPC
+    Export:
+      Name: !Sub "${AWS::StackName}-CFVPC-ID"
+  WebSubnet1ID:
+    Description: "WebSubnet1 ID"
+    Value: !Ref WebSubnet1
+    Export:
+      Name: !Sub "${AWS::StackName}-WebSubnet1-ID"
+  AppSubnet1ID:
+    Description: "AppSubnet1 ID"
+    Value: !Ref AppSubnet1
+    Export:
+      Name: !Sub "${AWS::StackName}-AppSubnet1-ID"
+  WebSrvSGID:
+    Description: "Webserver security group id"
+    Value: !Ref WebServerSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-WebSrvSGID"
+  SSHSrvSGID:
+    Description: "SSH Server security group id"
+    Value: !Ref SSHServerSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-SSHSrvSGID"
+  SSHAppSrvSGID:
+    Description: "SSH server security group id for APP servers"
+    Value: !Ref SSHAppServerSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-AppSrvSSHSGID"
